@@ -1,0 +1,30 @@
+name: Verify and import portfolio assets
+on: [push, workflow_dispatch]
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Restore original assets and verify Git hashes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, urllib.request
+          root = pathlib.Path('portfolio-transfer')
+          endpoint = os.environ['GITHUB_API_URL'] + '/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs'
+          for item in json.loads((root / 'manifest.json').read_text()):
+              data = b''.join((root / sha).read_bytes() for sha in item['parts'])
+              digest = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+              assert digest == item['sha'], item['path']
+              body = json.dumps({'encoding':'base64','content':base64.b64encode(data).decode()}).encode()
+              request = urllib.request.Request(endpoint, body, {'Authorization':'Bearer ' + os.environ['GH_TOKEN'], 'Content-Type':'application/json'})
+              with urllib.request.urlopen(request, timeout=90) as response:
+                  assert json.load(response)['sha'] == digest, item['path']
+              print('Verified:', item['path'], flush=True)
+          PY
